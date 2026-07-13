@@ -1,6 +1,6 @@
 # Hand Gesture Control — 手势控制舵机
 
-使用电脑 USB 摄像头实时识别手势（张开手掌 / 握拳），通过串口控制 Arduino Mega 2560 驱动 DS3225 舵机切换夹爪开合状态。
+使用电脑 USB 摄像头实时识别手势，通过串口控制 Arduino Mega 2560 驱动 DS3225 舵机。提供两个版本：**双位控制**（开/关二值）和**连续控制**（无级调节）。
 
 ## 系统架构
 
@@ -8,8 +8,11 @@
 USB Camera → Python(OpenCV + MediaPipe) → Serial(COM) → Arduino Mega2560 → DS3225 Servo
 ```
 
-- 张开手（Open Palm）→ 发送 `O` → 舵机运动到 2200us（夹爪张开）
-- 握拳（Closed Fist）→ 发送 `C` → 舵机运动到 1100us（夹爪关闭）
+| 版本 | 手势 | 串口命令 | 舵机动作 |
+|------|------|----------|----------|
+| 双位控制 | 张开手掌 | `O` | 2200us（全开） |
+| 双位控制 | 握拳 | `C` | 1100us（全关） |
+| 连续控制 | 手的开合程度 | `1500\n`（脉宽值） | 1100~2200us（无级调节） |
 
 ## 硬件清单
 
@@ -33,12 +36,16 @@ USB Camera → Python(OpenCV + MediaPipe) → Serial(COM) → Arduino Mega2560 �
 
 ```
 handgesture_control/
-├── arduino/
-│   └── main.ino              # Arduino Mega 2560 固件
-├── python/
-│   ├── main.py               # Python 上位机主程序
-│   ├── requirements.txt       # Python 依赖清单
-│   └── hand_landmarker.task  # MediaPipe 手部检测模型（需自行下载）
+├── 双位控制/
+│   ├── main/
+│   │   └── main.ino              # Arduino 固件（双位）
+│   ├── main.py                   # Python 上位机（双位）
+│   └── requirements.txt
+├── 连续控制/
+│   ├── main/
+│   │   └── main.ino              # Arduino 固件（连续）
+│   ├── main.py                   # Python 上位机（连续）
+│   └── requirements.txt
 ├── .gitignore
 └── README.md
 ```
@@ -47,8 +54,10 @@ handgesture_control/
 
 ### 1. Python 依赖
 
+两个版本的依赖相同，任选一个目录安装：
+
 ```bash
-pip install -r python/requirements.txt
+pip install -r 双位控制/requirements.txt
 ```
 
 依赖包：
@@ -73,11 +82,18 @@ curl.exe -L -o C:\mediapipe_models\hand_landmarker.task "https://storage.googlea
 
 或手动下载：[hand_landmarker.task](https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task)
 
-下载后放置到 `C:\mediapipe_models\` 目录下（或其他纯英文路径），并在 `python/main.py` 中修改 `MODEL_PATH`。
+下载后放置到 `C:\mediapipe_models\` 目录下（或其他纯英文路径），并在 `main.py` 中修改 `MODEL_PATH`。
 
 ### 3. Arduino 固件
 
-1. 用 Arduino IDE 打开 `arduino/main.ino`
+根据使用的版本选择对应的固件：
+
+| 版本 | 固件文件 |
+|------|----------|
+| 双位控制 | `双位控制/main/main.ino` |
+| 连续控制 | `连续控制/main/main.ino` |
+
+1. 用 Arduino IDE 打开对应固件
 2. 选择开发板：**工具 → 开发板 → Arduino Mega or Mega 2560**
 3. 选择处理器：**ATmega2560 (Mega 2560)**
 4. 选择正确的 COM 端口
@@ -85,15 +101,12 @@ curl.exe -L -o C:\mediapipe_models\hand_landmarker.task "https://storage.googlea
 
 ## 配置
 
-编辑 `python/main.py` 顶部的配置区：
+编辑对应版本 `main.py` 顶部的配置区：
 
 ```python
 # --- 串口配置 ---
 SERIAL_PORT = "COM9"        # ← 改成你的实际串口号
 BAUD_RATE = 115200           # 波特率
-
-# --- 防抖配置 ---
-DEBOUNCE_FRAMES = 5          # 防抖帧数阈值
 
 # --- 摄像头配置 ---
 CAMERA_INDEX = 0             # 摄像头索引
@@ -102,72 +115,80 @@ CAMERA_INDEX = 0             # 摄像头索引
 MODEL_PATH = r"C:\mediapipe_models\hand_landmarker.task"  # ← 模型文件路径
 ```
 
+连续控制版本还有额外参数：
+
+```python
+# --- 舵机脉宽范围 ---
+PULSE_MIN = 1100            # 最小脉宽（握拳时）
+PULSE_MAX = 2200            # 最大脉宽（张开时）
+
+# --- 开合度归一化参数 ---
+RATIO_MIN = 0.8             # 伸展比下限（对应握拳）
+RATIO_MAX = 1.3             # 伸展比上限（对应张开）
+
+# --- 平滑参数 ---
+SMOOTH_WINDOW = 5           # 滑动平均窗口大小
+
+# --- 串口发送间隔 ---
+SEND_INTERVAL = 0.05        # 最小发送间隔（秒）
+```
+
 查看串口号方法：
 - Windows：设备管理器 → 端口（COM 和 LPT）
 - Linux：`ls /dev/ttyUSB*` 或 `ls /dev/ttyACM*`
 
 ## 运行
 
+### 双位控制版本
+
 ```bash
-cd python
+cd 双位控制
 python main.py
 ```
 
-## 使用方法
+- 张开手掌 → 夹爪全开（2200us）
+- 握拳 → 夹爪全关（1100us）
+- 连续 5 帧确认才切换，防误触
 
-1. 确保 Arduino 已上传固件并连接电脑
-2. 运行 Python 程序，摄像头画面会弹出
-3. 对着摄像头做手势：
-   - **张开手掌**（五指伸直）→ 夹爪张开（舵机 2200us）
-   - **握拳**（五指弯曲）→ 夹爪关闭（舵机 1100us）
-4. 画面左上角显示当前状态和识别结果
-5. 按 **Q** 键退出
+### 连续控制版本
+
+```bash
+cd 连续控制
+python main.py
+```
+
+- 手的开合程度直接映射到舵机位置
+- 画面显示开合度百分比、脉宽值和进度条
+- 滑动平均平滑，无级调节
+
+按 **Q** 键退出。
 
 ## 工作原理
 
-### 手势检测
+### 双位控制
 
-使用 **MediaPipe Tasks API** 检测手部 21 个关键点，通过几何规则判断手势：
+使用 MediaPipe 检测 21 个关键点，距离法判断手指伸直/弯曲，5帧投票防抖，仅在状态变化时发送命令。
 
-- **距离法**：比较指尖(TIP)到手腕的距离与近端关节(PIP)到手腕的距离
-  - 伸直时 TIP 离手腕更远
-  - 弯曲时 TIP 被拉回，距离反而比 PIP 近
-- 此方法对手部旋转不敏感，可以在任意角度挥手
+### 连续控制
 
-### 防抖机制
-
-使用 `collections.deque` 滑动窗口（5帧）+ `Counter` 投票取众数：
-- 连续 5 帧识别为同一手势才确认状态改变
-- 避免单帧误识别导致舵机不停运动
-
-### 状态管理
-
-- 维护 `current_state` 变量（"OPEN" / "CLOSE"）
-- 仅在状态变化时发送串口命令，不重复发送
-- 未检测到手时不发送任何命令，保持当前状态
+计算 5 根手指的"伸展比"（指尖到手腕距离 / 关节到手腕距离），取平均后归一化到 [0, 1]，映射到脉宽 [1100, 2200]us。滑动平均平滑，50ms 发送间隔限流。
 
 ## 命令协议
+
+### 双位控制
 
 | 串口命令 | 含义 | 舵机动作 |
 |----------|------|----------|
 | `O` | Open（张开手掌） | `servo.writeMicroseconds(2200)` |
 | `C` | Close（握拳） | `servo.writeMicroseconds(1100)` |
 
-## 代码结构
+### 连续控制
 
-Python 上位机采用函数封装，结构清晰：
+| 串口格式 | 含义 | 示例 |
+|----------|------|------|
+| `脉宽值\n` | ASCII 数字 + 换行符 | `1500\n` → 舵机到 1500us |
 
-| 函数/类 | 说明 |
-|---------|------|
-| `calculate_distance()` | 计算两个 landmark 之间的欧氏距离 |
-| `is_finger_extended()` | 判断非拇指手指是否伸直（距离法） |
-| `is_thumb_extended()` | 判断拇指是否伸直（横向距离法） |
-| `detect_hand_state()` | 手势识别核心：5指全伸=OPEN，全弯=CLOSE |
-| `send_command()` | 串口发送封装 |
-| `GestureDebouncer` | 防抖器类：滑动窗口投票 |
-| `draw_hand_landmarks()` | 在画面上绘制手部关键点和骨架 |
-| `draw_ui()` | 绘制 UI 信息（状态、手势、FPS） |
-| `main()` | 主程序入口 |
+有效范围：1100~2200，超出自动限幅。
 
 ## 常见问题
 
@@ -177,7 +198,7 @@ A: mediapipe 0.10.35 已移除旧版 `solutions` API，本项目已改用新版 
 
 ### Q: 运行时报 `Unable to open file` 或 numpy 相关错误
 
-A: 
+A:
 1. numpy 版本需 <2：`pip install "numpy<2"`
 2. opencv-python 需降级到 4.10：`pip install opencv-python==4.10.0.84`
 3. 模型文件路径不能包含中文字符
@@ -186,13 +207,17 @@ A:
 
 A: 检查串口号是否正确、Arduino IDE 串口监视器是否已关闭（会占用端口）。
 
-### Q: 识别不灵敏
+### Q: 连续控制时舵机抖动
 
-A: 确保光线充足，手部完整出现在画面中，保持 5 帧以上才能触发动作（防抖设计）。
+A: 增大 `SMOOTH_WINDOW` 值（如改为 8 或 10），增加平滑度。
+
+### Q: 连续控制范围不匹配
+
+A: 调整 `RATIO_MIN` 和 `RATIO_MAX` 参数。每个人手型不同，可在运行时观察画面中的开合度百分比是否与实际手势匹配。
 
 ### Q: 舵机不动
 
-A: 确认外部供电已接通，信号线接在 D9，Arduino 与舵机需共地。
+A: 确认外部供电已接通，信号线接在 D9，Arduino 与舵机需共地。确保 Arduino 和 Python 使用的是同一版本的协议（双位 vs 连续）。
 
 ## 技术栈
 
